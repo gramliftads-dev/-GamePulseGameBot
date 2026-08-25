@@ -1,0 +1,41 @@
+# Core Framework
+python-dotenv==1.0.0
+pydantic==2.5.0
+pydantic-settings==2.1.0
+
+# Telegram Bot
+aiogram==3.2.0
+
+# Database
+sqlalchemy==2.0.23
+asyncpg==0.29.0
+alembic==1.12.1
+psycopg2-binary==2.9.9
+
+# Redis
+redis==5.0.1
+
+# API
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+
+# Utilities
+python-multipart==0.0.6
+email-validator==2.1.0
+python-json-logger==2.0.7
+pytz==2023.3
+
+# Testing
+pytest==7.4.3
+pytest-asyncio==0.21.1
+pytest-cov==4.1.0
+httpx==0.25.1
+
+# Development
+black==23.11.0
+flake8==6.1.0
+mypy==1.7.0
+isort==5.12.0
+
+# Production
+gunicorn==21.2.0
