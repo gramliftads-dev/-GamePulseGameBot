@@ -1150,4 +1150,161 @@ class UserRepository:
         result = await self.session.execute(query)
         return result.scalars().all()
     
-    # =================
+    # ==================== Admin Operations ====================
+    
+    async def get_all_users(
+        self,
+        limit: int = 100,
+        offset: int = 0,
+        include_banned: bool = False
+    ) -> Tuple[List[User], int]:
+        """
+        Get all users (admin only)
+        
+        Args:
+            limit: Number of results
+            offset: Offset for pagination
+            include_banned: Whether to include banned users
+        
+        Returns:
+            Tuple of (users, total count)
+        """
+        query = select(User)
+        
+        if not include_banned:
+            query = query.where(User.is_banned == False)
+        
+        # Get total count
+        count_query = select(func.count()).select_from(query.subquery())
+        result = await self.session.execute(count_query)
+        total = result.scalar() or 0
+        
+        # Apply pagination
+        query = query.order_by(desc(User.registered_at)).offset(offset).limit(limit)
+        result = await self.session.execute(query)
+        users = result.scalars().all()
+        
+        return users, total
+    
+    async def get_user_count(self) -> Dict[str, int]:
+        """
+        Get user count statistics
+        
+        Returns:
+            Dictionary with user counts
+        """
+        # Total users
+        total_query = select(func.count()).where(User.is_active == True)
+        result = await self.session.execute(total_query)
+        total = result.scalar() or 0
+        
+        # Banned users
+        banned_query = select(func.count()).where(User.is_banned == True)
+        result = await self.session.execute(banned_query)
+        banned = result.scalar() or 0
+        
+        # Active today
+        today = datetime.utcnow().date()
+        active_query = select(func.count()).where(
+            User.last_active_at >= datetime.combine(today, datetime.min.time()),
+            User.is_active == True
+        )
+        result = await self.session.execute(active_query)
+        active_today = result.scalar() or 0
+        
+        # New users today
+        new_query = select(func.count()).where(
+            User.registered_at >= datetime.combine(today, datetime.min.time())
+        )
+        result = await self.session.execute(new_query)
+        new_today = result.scalar() or 0
+        
+        return {
+            "total": total,
+            "banned": banned,
+            "active_today": active_today,
+            "new_today": new_today
+        }
+    
+    # ==================== Utility Methods ====================
+    
+    def _generate_referral_code(self, length: int = 8) -> str:
+        """Generate a unique referral code"""
+        import secrets
+        import string
+        alphabet = string.ascii_uppercase + string.digits
+        return ''.join(secrets.choice(alphabet) for _ in range(length))
+    
+    def _deep_merge(self, base: Dict, update: Dict) -> None:
+        """Deep merge two dictionaries"""
+        for key, value in update.items():
+            if key in base and isinstance(base[key], dict) and isinstance(value, dict):
+                self._deep_merge(base[key], value)
+            else:
+                base[key] = value
+    
+    async def _log_activity(
+        self,
+        user_id: int,
+        action: str,
+        details: Optional[Dict[str, Any]] = None
+    ) -> None:
+        """Log user activity"""
+        log = UserActivityLog(
+            user_id=user_id,
+            action=action,
+            details=details or {},
+            created_at=datetime.utcnow()
+        )
+        self.session.add(log)
+        await self.session.flush()
+    
+    async def _clear_user_cache(self, telegram_id: int) -> None:
+        """Clear user cache"""
+        await redis_manager.delete(f"user:telegram:{telegram_id}")
+        await redis_manager.delete(f"user:stats:{telegram_id}")
+        await redis_manager.delete(f"user:profile:{telegram_id}")
+    
+    # ==================== Snapshot Operations ====================
+    
+    async def create_daily_snapshot(self, user_id: int) -> None:
+        """
+        Create a daily snapshot of user stats for analytics
+        
+        Args:
+            user_id: User ID
+        """
+        user = await self.get_by_id(user_id)
+        if not user:
+            return
+        
+        # Check if snapshot already exists for today
+        today = datetime.utcnow().date()
+        query = select(UserStatsSnapshot).where(
+            UserStatsSnapshot.user_id == user_id,
+            UserStatsSnapshot.snapshot_date >= datetime.combine(today, datetime.min.time())
+        )
+        result = await self.session.execute(query)
+        existing = result.scalar_one_or_none()
+        
+        if existing:
+            return
+        
+        # Create snapshot
+        snapshot = UserStatsSnapshot(
+            user_id=user.id,
+            snapshot_date=datetime.utcnow(),
+            level=user.level,
+            xp=user.xp,
+            pulse_points=user.pulse_points,
+            games_played=user.games_played,
+            games_won=user.games_won,
+            current_streak=user.current_streak,
+            longest_streak=user.longest_streak,
+            xp_gained=0,
+            points_gained=0,
+            games_played_today=0,
+            games_won_today=0
+        )
+        self.session.add(snapshot)
+        await self.session.flush()
